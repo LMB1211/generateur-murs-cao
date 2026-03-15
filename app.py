@@ -28,20 +28,30 @@ MATERIAUX = {
     "Colle / Mortier": {"motif": "AR-SAND", "echelle": 0.1, "angle": 0, "couleur": 252, "motif_elev": "AR-SAND", "echelle_elev": 1.0, "angle_elev": 0}
 }
 
-# Fonction mise à jour pour créer des hachures 100% ASSOCIATIVES
+# --- LA FONCTION MAGIQUE DE HACHURE ASSOCIATIVE ---
 def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle):
     if motif is not None:
         try:
             hatch = msp.add_hatch(color=256, dxfattribs={'layer': layer})
             hatch.set_pattern_fill(motif, scale=echelle, angle=angle)
             
-            # On ajoute le chemin à la hachure
+            # 1. On donne le chemin à la hachure
             path = hatch.paths.add_polyline_path(points, is_closed=True)
             
-            # MAGIE DE L'ASSOCIATIVITÉ :
+            # 2. On dit à la hachure qu'elle dépend de la polyligne
             hatch.dxf.associative = 1
-            # On lie le Handle (ID unique) de la polyligne au chemin de la hachure
             path.source_boundary_objects = [polyline.dxf.handle]
+            
+            # 3. LE SECRET : Le Réacteur ! 
+            # On dit à la polyligne de prévenir la hachure en cas d'étirement
+            polyline.append_reactor_handle(hatch.dxf.handle)
+            
+            # 4. LE POINT DE GERME (Seed point)
+            # AutoCAD en a besoin pour savoir où calculer l'intérieur de la forme
+            cx = sum(p[0] for p in points) / len(points)
+            cy = sum(p[1] for p in points) / len(points)
+            hatch.set_seed_points([(cx, cy)])
+            
         except Exception:
             pass 
 
