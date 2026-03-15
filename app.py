@@ -17,13 +17,14 @@ MATERIAUX = {
     "Bardage bois (Horizontal)": {"motif": "ANSI31", "echelle": 1.0, "angle": 0, "couleur": 34, "motif_elev": "LINE", "echelle_elev": 15.0, "angle_elev": 0},
     "Bardage bois (Vertical)": {"motif": "ANSI31", "echelle": 1.0, "angle": 0, "couleur": 34, "motif_elev": "LINE", "echelle_elev": 15.0, "angle_elev": 90},
     "Zinc (Joint debout)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 5, "motif_elev": "LINE", "echelle_elev": 40.0, "angle_elev": 90},
-    "Céramique / Terre cuite": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 14, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0}, # Pas de hachure, on dessinera le calepinage
+    "Céramique / Terre cuite": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 14, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
     "Acier nervuré (Bac acier)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 5, "motif_elev": "LINE", "echelle_elev": 20.0, "angle_elev": 90},
     "Panneau Fibre-ciment": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 250, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
     "Plaque de plâtre (BA13/Fermacell)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 4, "motif_elev": "SOLID", "echelle_elev": 1.0, "angle_elev": 0},
     "Panneau OSB / Contreplaqué": {"motif": "ANSI31", "echelle": 0.5, "angle": 90, "couleur": 36, "motif_elev": "AR-SAND", "echelle_elev": 1.0, "angle_elev": 0},
     "Pare-pluie / Pare-vapeur": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 6, "motif_elev": "SOLID", "echelle_elev": 1.0, "angle_elev": 0},
-    "Vide / Lame d'air": {"motif": None, "echelle": 1.0, "angle": 0, "couleur": 7, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0}
+    "Vide / Lame d'air": {"motif": None, "echelle": 1.0, "angle": 0, "couleur": 7, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
+    "Colle / Mortier": {"motif": "AR-SAND", "echelle": 0.1, "angle": 0, "couleur": 252, "motif_elev": "AR-SAND", "echelle_elev": 1.0, "angle_elev": 0}
 }
 
 def dessiner_hachure(msp, points, layer, motif, echelle, angle):
@@ -39,9 +40,9 @@ def dessiner_hachure(msp, points, layer, motif, echelle, angle):
 def generer_dxf(couches, hauteur_mur):
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
-    longueur_mur = 2400 # Allongé pour bien voir le calepinage
+    longueur_mur = 2400 
     
-    # [Création des calques inchangée]
+    # Création des calques
     for i, couche in enumerate(couches):
         mat_nom = couche['materiau']
         nom_calque = f"MUR_{i+1}_{mat_nom.upper().replace(' ', '_').replace('/', '_')}"
@@ -65,26 +66,14 @@ def generer_dxf(couches, hauteur_mur):
             dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
             
         elif couche['type'] == "Ossature Métallique (Équerres)":
-            # Dessin d'un profilé en T simplifié et de la lame d'air
             x_plan = 0
             while x_plan < longueur_mur:
-                # Équerre + Profilé (Dessiné comme un "T" de 40mm de large)
                 largeur_prof = 40
                 ep_metal = 3
-                # Barre perpendiculaire (l'équerre)
-                pts_eq = [(x_plan + largeur_prof/2 - ep_metal/2, y_plan), 
-                          (x_plan + largeur_prof/2 + ep_metal/2, y_plan), 
-                          (x_plan + largeur_prof/2 + ep_metal/2, y_plan + ep), 
-                          (x_plan + largeur_prof/2 - ep_metal/2, y_plan + ep)]
-                # Barre parallèle (la face du profilé)
-                pts_face = [(x_plan, y_plan + ep - ep_metal), 
-                            (x_plan + largeur_prof, y_plan + ep - ep_metal), 
-                            (x_plan + largeur_prof, y_plan + ep), 
-                            (x_plan, y_plan + ep)]
-                
+                pts_eq = [(x_plan + largeur_prof/2 - ep_metal/2, y_plan), (x_plan + largeur_prof/2 + ep_metal/2, y_plan), (x_plan + largeur_prof/2 + ep_metal/2, y_plan + ep), (x_plan + largeur_prof/2 - ep_metal/2, y_plan + ep)]
+                pts_face = [(x_plan, y_plan + ep - ep_metal), (x_plan + largeur_prof, y_plan + ep - ep_metal), (x_plan + largeur_prof, y_plan + ep), (x_plan, y_plan + ep)]
                 msp.add_lwpolyline(pts_eq, close=True, dxfattribs={'layer': nom_calque})
                 msp.add_lwpolyline(pts_face, close=True, dxfattribs={'layer': nom_calque})
-                
                 x_plan += couche.get('entraxe', 600)
 
         elif couche['type'] == "Structure / Lattage" and couche['orientation'] == "Verticale":
@@ -93,6 +82,7 @@ def generer_dxf(couches, hauteur_mur):
                 larg_m = couche.get('largeur_montant', 45)
                 pts_m = [(x_plan, y_plan), (x_plan + larg_m, y_plan), (x_plan + larg_m, y_plan + ep), (x_plan, y_plan + ep)]
                 msp.add_lwpolyline(pts_m, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, pts_m, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
                 x_plan += couche.get('entraxe', 600)
         y_plan += ep
 
@@ -107,10 +97,19 @@ def generer_dxf(couches, hauteur_mur):
         
         pts = [(x_coupe, y_coupe_base), (x_coupe + ep, y_coupe_base), (x_coupe + ep, y_coupe_base + hauteur_mur), (x_coupe, y_coupe_base + hauteur_mur)]
         
-        if couche['type'] in ["Continue", "Ossature Métallique (Équerres)"]:
-            # L'équerre métallique vue de côté ressemble à une ligne continue traversant l'air
+        if couche['type'] in ["Continue", "Ossature Métallique (Équerres)"] or (couche['type'] == "Structure / Lattage" and couche['orientation'] == "Verticale"):
             msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-            dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+            if couche['type'] != "Ossature Métallique (Équerres)":
+                 dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+        
+        elif couche['type'] == "Structure / Lattage" and couche['orientation'] == "Horizontale":
+            y_tass = y_coupe_base
+            while y_tass < (y_coupe_base + hauteur_mur):
+                h_tass = min(couche.get('largeur_montant', 45), (y_coupe_base + hauteur_mur) - y_tass)
+                pts_tass = [(x_coupe, y_tass), (x_coupe + ep, y_tass), (x_coupe + ep, y_tass + h_tass), (x_coupe, y_tass + h_tass)]
+                msp.add_lwpolyline(pts_tass, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, pts_tass, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                y_tass += couche.get('entraxe', 400)
         x_coupe += ep
 
     # --- VUE EN ÉLÉVATION (AVEC CALEPINAGE) ---
@@ -124,23 +123,17 @@ def generer_dxf(couches, hauteur_mur):
         doc.layers.add(name="VUE_ELEVATION", color=mat_ext['couleur'])
         msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
         
-        # SI CALEPINAGE EST ACTIF
         if 'calepinage_l' in couche_ext and couche_ext['calepinage_l'] > 0:
-            doc.layers.add(name="VUE_ELEVATION_JOINTS", color=252) # Couleur grise pour les joints
-            
-            # Lignes verticales du calepinage
+            doc.layers.add(name="VUE_ELEVATION_JOINTS", color=252)
             cal_x = x_elev
             while cal_x <= x_elev + longueur_mur:
                 msp.add_line((cal_x, y_coupe_base), (cal_x, y_coupe_base + hauteur_mur), dxfattribs={'layer': "VUE_ELEVATION_JOINTS"})
                 cal_x += couche_ext['calepinage_l']
-                
-            # Lignes horizontales du calepinage
             cal_y = y_coupe_base
             while cal_y <= y_coupe_base + hauteur_mur:
                 msp.add_line((x_elev, cal_y), (x_elev + longueur_mur, cal_y), dxfattribs={'layer': "VUE_ELEVATION_JOINTS"})
                 cal_y += couche_ext['calepinage_h']
         else:
-            # Hachure classique si pas de calepinage
             dessiner_hachure(msp, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
 
     buffer = io.StringIO()
@@ -166,22 +159,19 @@ with col1:
     mat_isolant = st.selectbox("Matériau isolant", ["Isolant rigide (PSE/PUR)", "Isolant souple (Laine minérale)", "Isolant naturel (Fibre bois)"])
     ep_isolant = st.number_input("Épaisseur isolant (mm)", value=120, step=10)
 
-    st.header("4. Finitions")
-    c_int, c_ext = st.columns(2)
-    with c_int:
-        mat_par_int = st.selectbox("Parement intérieur", ["Plaque de plâtre (BA13/Fermacell)", "Panneau OSB / Contreplaqué"])
-        ep_par_int = st.number_input("Épaisseur par. int. (mm)", value=13)
-    with c_ext:
-        mat_par_ext = st.selectbox("Façade extérieure", ["Enduit extérieur", "Bardage bois (Horizontal)", "Bardage bois (Vertical)", "Zinc (Joint debout)", "Céramique / Terre cuite", "Panneau Fibre-ciment", "Acier nervuré (Bac acier)"])
-        ep_par_ext = st.number_input("Épaisseur façade (mm)", value=20)
-        
-        # Option de Calepinage conditionnelle
-        calepinage_l, calepinage_h = 0, 0
-        if mat_par_ext in ["Céramique / Terre cuite", "Panneau Fibre-ciment"]:
-            st.markdown("📏 **Dimensions du calepinage**")
-            sc1, sc2 = st.columns(2)
-            calepinage_l = sc1.number_input("Largeur (mm)", value=600, step=50)
-            calepinage_h = sc2.number_input("Hauteur (mm)", value=300, step=50)
+    st.header("4. Finitions Extérieures")
+    mat_par_ext = st.selectbox("Façade extérieure", ["Enduit extérieur", "Bardage bois (Horizontal)", "Bardage bois (Vertical)", "Zinc (Joint debout)", "Céramique / Terre cuite", "Panneau Fibre-ciment", "Acier nervuré (Bac acier)"])
+    ep_par_ext = st.number_input("Épaisseur du parement (mm)", value=20)
+    
+    # Choix du type de pose (Ventilée ou Non Ventilée)
+    type_pose = st.radio("Type de pose du parement", ["Ventilée (avec lame d'air et ossature)", "Non ventilée (Fixation directe / collée / vêture)"])
+    
+    calepinage_l, calepinage_h = 0, 0
+    if mat_par_ext in ["Céramique / Terre cuite", "Panneau Fibre-ciment"]:
+        st.markdown("📏 **Dimensions du calepinage**")
+        sc1, sc2 = st.columns(2)
+        calepinage_l = sc1.number_input("Largeur (mm)", value=600, step=50)
+        calepinage_h = sc2.number_input("Hauteur (mm)", value=300, step=50)
 
 with col2:
     st.header("Export & Bilan")
@@ -190,12 +180,11 @@ with col2:
     if st.button("🔧 Générer le complexe mural", type="primary"):
         couches = []
         
-        # INTÉRIEUR
-        couches.append({"type": "Continue", "materiau": mat_par_int, "epaisseur": ep_par_int})
+        # INTÉRIEUR & PORTEUR (Simplifié pour l'exemple)
+        couches.append({"type": "Continue", "materiau": "Plaque de plâtre (BA13/Fermacell)", "epaisseur": 13})
         if type_mur == "ITI" and mat_structure != "Ossature Bois (MOB)":
             couches.append({"type": "Structure / Lattage", "orientation": "Verticale", "materiau": "Métal (Acier/Alu)", "materiau_remplissage": mat_isolant, "epaisseur": ep_isolant, "largeur_montant": 45, "entraxe": 600})
             
-        # PORTEUR
         if mat_structure == "Ossature Bois (MOB)":
             couches.append({"type": "Continue", "materiau": "Pare-pluie / Pare-vapeur", "epaisseur": 2})
             couches.append({"type": "Structure / Lattage", "orientation": "Verticale", "materiau": "Bois massif", "materiau_remplissage": mat_isolant, "epaisseur": ep_structure, "largeur_montant": 45, "entraxe": 600})
@@ -203,28 +192,42 @@ with col2:
         else:
             couches.append({"type": "Continue", "materiau": mat_structure, "epaisseur": ep_structure})
             
-        # ITE
         if type_mur == "ITE":
             couches.append({"type": "Continue", "materiau": mat_isolant, "epaisseur": ep_isolant})
 
-        # --- INTELLIGENCE DE L'ACCROCHE DE FAÇADE ---
-        ep_lame_air = 30 # standard DTU
+        # --- INTELLIGENCE DE L'ACCROCHE (VENTILÉE vs NON VENTILÉE) ---
+        if type_pose == "Ventilée (avec lame d'air et ossature)":
+            ep_lame_air = 30
+            
+            if mat_par_ext in ["Bardage bois (Horizontal)", "Bardage bois (Vertical)", "Acier nervuré (Bac acier)"]:
+                couches.append({"type": "Continue", "materiau": "Pare-pluie / Pare-vapeur", "epaisseur": 2})
+                # Bardage Vertical bois = Double ossature (Vertical pour l'air + Horizontal pour clouer)
+                if "Vertical" in mat_par_ext:
+                    couches.append({"type": "Structure / Lattage", "orientation": "Verticale", "materiau": "Bois massif", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": 27, "largeur_montant": 45, "entraxe": 600})
+                    couches.append({"type": "Structure / Lattage", "orientation": "Horizontale", "materiau": "Bois massif", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": 27, "largeur_montant": 45, "entraxe": 400})
+                else:
+                    # Bardage Horizontal = Simple ossature verticale
+                    couches.append({"type": "Structure / Lattage", "orientation": "Verticale", "materiau": "Bois massif", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": ep_lame_air, "largeur_montant": 45, "entraxe": 600})
+                
+            elif mat_par_ext == "Zinc (Joint debout)":
+                couches.append({"type": "Continue", "materiau": "Pare-pluie / Pare-vapeur", "epaisseur": 2})
+                couches.append({"type": "Structure / Lattage", "orientation": "Verticale", "materiau": "Bois massif", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": ep_lame_air, "largeur_montant": 45, "entraxe": 600})
+                couches.append({"type": "Continue", "materiau": "Bois massif", "epaisseur": 18}) # Volige
+                
+            elif mat_par_ext in ["Céramique / Terre cuite", "Panneau Fibre-ciment"]:
+                # OSSATURE DOUBLE MÉTALLIQUE POUR CÉRAMIQUE
+                entraxe_v = calepinage_l if calepinage_l > 0 else 600
+                entraxe_h = calepinage_h if calepinage_h > 0 else 300
+                # 1. Équerres et montants verticaux (Ventilation)
+                couches.append({"type": "Ossature Métallique (Équerres)", "materiau": "Métal (Acier/Alu)", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": ep_lame_air, "entraxe": entraxe_v})
+                # 2. Lisses horizontales pour clipser les panneaux
+                couches.append({"type": "Structure / Lattage", "orientation": "Horizontale", "materiau": "Métal (Acier/Alu)", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": 15, "largeur_montant": 30, "entraxe": entraxe_h})
         
-        if mat_par_ext in ["Bardage bois (Horizontal)", "Bardage bois (Vertical)", "Acier nervuré (Bac acier)"]:
-            couches.append({"type": "Continue", "materiau": "Pare-pluie / Pare-vapeur", "epaisseur": 2})
-            # Lattage bois
-            couches.append({"type": "Structure / Lattage", "orientation": "Verticale" if "Horizontal" in mat_par_ext else "Horizontale", "materiau": "Bois massif", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": ep_lame_air, "largeur_montant": 45, "entraxe": 400})
-            
-        elif mat_par_ext == "Zinc (Joint debout)":
-            couches.append({"type": "Continue", "materiau": "Pare-pluie / Pare-vapeur", "epaisseur": 2})
-            # Tasseaux de ventilation puis Voligeage continu (exigence zinc)
-            couches.append({"type": "Structure / Lattage", "orientation": "Verticale", "materiau": "Bois massif", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": ep_lame_air, "largeur_montant": 45, "entraxe": 400})
-            couches.append({"type": "Continue", "materiau": "Bois massif", "epaisseur": 18}) # La volige
-            
-        elif mat_par_ext in ["Céramique / Terre cuite", "Panneau Fibre-ciment"]:
-            # L'ossature métallique !
-            entraxe_metal = calepinage_l if calepinage_l > 0 else 600
-            couches.append({"type": "Ossature Métallique (Équerres)", "materiau": "Métal (Acier/Alu)", "materiau_remplissage": "Vide / Lame d'air", "epaisseur": ep_lame_air, "entraxe": entraxe_metal})
+        else:
+            # NON VENTILÉ (Pose collée ou directe)
+            if mat_par_ext in ["Céramique / Terre cuite", "Enduit extérieur"]:
+                couches.append({"type": "Continue", "materiau": "Colle / Mortier", "epaisseur": 5})
+            # Pas de lame d'air, le parement s'applique directement
 
         # LA FINITION
         couche_finition = {"type": "Continue", "materiau": mat_par_ext, "epaisseur": ep_par_ext}
@@ -236,9 +239,8 @@ with col2:
         st.session_state.couches_generees = couches
         st.success("Complexe assemblé avec succès !")
 
-    # Bilan
     if 'couches_generees' in st.session_state:
         ep_totale = sum(c['epaisseur'] for c in st.session_state.couches_generees)
         st.info(f"Épaisseur totale réelle : **{ep_totale} mm**")
         dxf_data = generer_dxf(st.session_state.couches_generees, hauteur_mur)
-        st.download_button(label="💾 Télécharger les Plans (.dxf)", data=dxf_data, file_name="mur_calepinage.dxf", mime="application/dxf", use_container_width=True)
+        st.download_button(label="💾 Télécharger les Plans (.dxf)", data=dxf_data, file_name="mur_expert.dxf", mime="application/dxf", use_container_width=True)
