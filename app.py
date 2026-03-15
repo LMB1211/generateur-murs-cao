@@ -28,12 +28,20 @@ MATERIAUX = {
     "Colle / Mortier": {"motif": "AR-SAND", "echelle": 0.1, "angle": 0, "couleur": 252, "motif_elev": "AR-SAND", "echelle_elev": 1.0, "angle_elev": 0}
 }
 
-def dessiner_hachure(msp, points, layer, motif, echelle, angle):
+# Fonction mise à jour pour créer des hachures 100% ASSOCIATIVES
+def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle):
     if motif is not None:
         try:
             hatch = msp.add_hatch(color=256, dxfattribs={'layer': layer})
             hatch.set_pattern_fill(motif, scale=echelle, angle=angle)
-            hatch.paths.add_polyline_path(points, is_closed=True)
+            
+            # On ajoute le chemin à la hachure
+            path = hatch.paths.add_polyline_path(points, is_closed=True)
+            
+            # MAGIE DE L'ASSOCIATIVITÉ :
+            hatch.dxf.associative = 1
+            # On lie le Handle (ID unique) de la polyligne au chemin de la hachure
+            path.source_boundary_objects = [polyline.dxf.handle]
         except Exception:
             pass 
 
@@ -68,14 +76,14 @@ def generer_dxf(couches, hauteur_mur):
                 pan_l = min(cal_l - ep_joint, longueur_mur - x_plan)
                 if pan_l > 0:
                     pts = [(x_plan, y_plan), (x_plan + pan_l, y_plan), (x_plan + pan_l, y_plan + ep), (x_plan, y_plan + ep)]
-                    msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-                    dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                    poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+                    dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
                 x_plan += cal_l
                 
         elif couche['type'] == "Continue" or couche.get('orientation') == "Horizontale":
             pts = [(0, y_plan), (longueur_mur, y_plan), (longueur_mur, y_plan + ep), (0, y_plan + ep)]
-            msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-            dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+            poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+            dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
             
         elif couche['type'] == "Ossature Métallique (Équerres)":
             x_plan = 0
@@ -93,8 +101,8 @@ def generer_dxf(couches, hauteur_mur):
             while x_plan < longueur_mur:
                 larg_m = couche.get('largeur_montant', 45)
                 pts_m = [(x_plan, y_plan), (x_plan + larg_m, y_plan), (x_plan + larg_m, y_plan + ep), (x_plan, y_plan + ep)]
-                msp.add_lwpolyline(pts_m, close=True, dxfattribs={'layer': nom_calque})
-                dessiner_hachure(msp, pts_m, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                poly_m = msp.add_lwpolyline(pts_m, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, poly_m, pts_m, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
                 x_plan += couche.get('entraxe', 600)
         y_plan += ep
 
@@ -114,23 +122,23 @@ def generer_dxf(couches, hauteur_mur):
                 pan_h = min(cal_h - ep_joint, (y_coupe_base + hauteur_mur) - y_c)
                 if pan_h > 0:
                     pts = [(x_coupe, y_c), (x_coupe + ep, y_c), (x_coupe + ep, y_c + pan_h), (x_coupe, y_c + pan_h)]
-                    msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-                    dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                    poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+                    dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
                 y_c += cal_h
 
         elif couche['type'] in ["Continue", "Ossature Métallique (Équerres)"] or (couche['type'] == "Structure / Lattage" and couche['orientation'] == "Verticale"):
             pts = [(x_coupe, y_coupe_base), (x_coupe + ep, y_coupe_base), (x_coupe + ep, y_coupe_base + hauteur_mur), (x_coupe, y_coupe_base + hauteur_mur)]
-            msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+            poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
             if couche['type'] != "Ossature Métallique (Équerres)":
-                 dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                 dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
         
         elif couche['type'] == "Structure / Lattage" and couche['orientation'] == "Horizontale":
             y_tass = y_coupe_base
             while y_tass < (y_coupe_base + hauteur_mur):
                 h_tass = min(couche.get('largeur_montant', 45), (y_coupe_base + hauteur_mur) - y_tass)
                 pts_tass = [(x_coupe, y_tass), (x_coupe + ep, y_tass), (x_coupe + ep, y_tass + h_tass), (x_coupe, y_tass + h_tass)]
-                msp.add_lwpolyline(pts_tass, close=True, dxfattribs={'layer': nom_calque})
-                dessiner_hachure(msp, pts_tass, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                poly_tass = msp.add_lwpolyline(pts_tass, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, poly_tass, pts_tass, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
                 y_tass += couche.get('entraxe', 400)
         x_coupe += ep
 
@@ -154,15 +162,15 @@ def generer_dxf(couches, hauteur_mur):
                     pan_h = min(cal_h - ep_joint, (y_coupe_base + hauteur_mur) - cal_y)
                     if pan_l > 0 and pan_h > 0:
                         pts_pan = [(cal_x, cal_y), (cal_x + pan_l, cal_y), (cal_x + pan_l, cal_y + pan_h), (cal_x, cal_y + pan_h)]
-                        msp.add_lwpolyline(pts_pan, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
-                        dessiner_hachure(msp, pts_pan, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
+                        poly_pan = msp.add_lwpolyline(pts_pan, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+                        dessiner_hachure(msp, poly_pan, pts_pan, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
                     cal_y += cal_h
                 cal_x += cal_l
                 
         else:
             pts_elev = [(x_elev, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
-            msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
-            dessiner_hachure(msp, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
+            poly_elev = msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+            dessiner_hachure(msp, poly_elev, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
 
     buffer = io.StringIO()
     doc.write(buffer)
@@ -214,10 +222,8 @@ with col2:
     if st.button("🔧 Générer le complexe mural", type="primary"):
         couches = []
         
-        # INTÉRIEUR (Désormais dynamique !)
         couches.append({"type": "Continue", "materiau": mat_par_int, "epaisseur": ep_par_int})
         
-        # PORTEUR & ISOLATION
         if type_mur == "ITI" and mat_structure != "Ossature Bois (MOB)":
             couches.append({"type": "Structure / Lattage", "orientation": "Verticale", "materiau": "Métal (Acier/Alu)", "materiau_remplissage": mat_isolant, "epaisseur": ep_isolant, "largeur_montant": 45, "entraxe": 600})
             
@@ -231,7 +237,6 @@ with col2:
         if type_mur == "ITE":
             couches.append({"type": "Continue", "materiau": mat_isolant, "epaisseur": ep_isolant})
 
-        # --- INTELLIGENCE DE L'ACCROCHE ---
         if "Ventilée" in type_pose:
             ep_lame_air = 30
             if mat_par_ext in ["Bardage bois (Horizontal)", "Bardage bois (Vertical)", "Acier nervuré (Bac acier)"]:
@@ -254,7 +259,6 @@ with col2:
             if mat_par_ext in ["Céramique / Terre cuite", "Enduit extérieur", "Carrelage"]:
                 couches.append({"type": "Continue", "materiau": "Colle / Mortier", "epaisseur": 5})
 
-        # LA FINITION EXTÉRIEURE
         couche_finition = {"type": "Continue", "materiau": mat_par_ext, "epaisseur": ep_par_ext}
         if calepinage_l > 0:
             couche_finition['calepinage_l'] = calepinage_l
