@@ -30,27 +30,34 @@ MATERIAUX = {
 
 COULEURS_MENUISERIE = {"Bois": 34, "Aluminium": 250, "PVC": 7, "Mixte Bois/Alu": 32}
 
-def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle, hole_pts=None):
+# --- CORRECTIF : GESTION DES TROUS ASSOCIATIFS ---
+def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle, hole_pts=None, hole_poly=None):
     if motif is not None:
         try:
             hatch = msp.add_hatch(color=256, dxfattribs={'layer': layer})
             hatch.dxf.hatch_style = 0 
             hatch.set_pattern_fill(motif, scale=echelle, angle=angle)
+            
+            # Contour principal
             path = hatch.paths.add_polyline_path(points, is_closed=True)
-            if hole_pts:
-                hatch.paths.add_polyline_path(hole_pts, is_closed=True)
-            hatch.dxf.associative = 1
             path.source_boundary_objects = [polyline.dxf.handle]
             polyline.append_reactor_handle(hatch.dxf.handle)
             
-            # CORRECTIF: On évite le centre du mur pour le "seed point" !
-            # On le place à 1% près du coin inférieur gauche pour fuir le trou de la fenêtre
+            # Contour du trou (si existant) ET on le relie !
+            if hole_pts and hole_poly:
+                path2 = hatch.paths.add_polyline_path(hole_pts, is_closed=True)
+                path2.source_boundary_objects = [hole_poly.dxf.handle]
+                hole_poly.append_reactor_handle(hatch.dxf.handle)
+            
+            hatch.dxf.associative = 1
+            
+            # Point de germe sécurisé (Évite le centre qui pourrait être dans la fenêtre)
             min_x = min(p[0] for p in points)
             min_y = min(p[1] for p in points)
             max_x = max(p[0] for p in points)
             max_y = max(p[1] for p in points)
-            cx = min_x + (max_x - min_x) * 0.01 
-            cy = min_y + (max_y - min_y) * 0.01
+            cx = min_x + (max_x - min_x) * 0.05 
+            cy = min_y + (max_y - min_y) * 0.05
             hatch.set_seed_points([(cx, cy)])
         except Exception:
             pass 
@@ -99,9 +106,8 @@ def generer_dxf(couches, hauteur_mur, men_config):
         mat = MATERIAUX[couche['materiau']]
         nom_calque = f"MUR_{i+1}_{couche['materiau'].upper().replace(' ', '_').replace('/', '_')}"
         
-        # CORRECTIF : Sécurité contre les blocs de 0 mm (x_end - x_start > 0.1)
         def dessiner_bloc(x_start, x_end, y):
-            if x_end - x_start > 0.1:
+            if x_end - x_start > 0.1: # Sécurité AutoCAD
                 pts = [(x_start, y), (x_end, y), (x_end, y + ep), (x_start, y + ep)]
                 poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
                 dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
@@ -132,7 +138,6 @@ def generer_dxf(couches, hauteur_mur, men_config):
             x_plan = 0
             while x_plan < longueur_mur:
                 larg_m = couche.get('largeur_montant', 45)
-                # Ne dessine le montant que s'il n'est pas dans le trou de la fenêtre
                 if not (a_menuiserie and x_plan + larg_m > x_trou_debut and x_plan < x_trou_fin):
                     dessiner_bloc(x_plan, x_plan + larg_m, y_plan)
                 x_plan += couche.get('entraxe', 600)
@@ -176,7 +181,6 @@ def generer_dxf(couches, hauteur_mur, men_config):
         mat = MATERIAUX[couche['materiau']]
         nom_calque = f"MUR_{i+1}_{couche['materiau'].upper().replace(' ', '_').replace('/', '_')}"
         
-        # CORRECTIF : Sécurité contre les blocs de 0 mm
         def dessiner_bloc_v(y_start, y_end):
             if y_end - y_start > 0.1:
                 pts = [(x_coupe, y_start), (x_coupe + ep, y_start), (x_coupe + ep, y_end), (x_coupe, y_end)]
@@ -239,10 +243,14 @@ def generer_dxf(couches, hauteur_mur, men_config):
         pts_elev = [(x_elev, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
         
         trou_pts = None
+        poly_trou = None
+        
         if a_menuiserie:
             x_trou_elev = x_elev + x_trou_debut
             trou_pts = [(x_trou_elev, y_trou_debut), (x_trou_elev + w_fen, y_trou_debut), (x_trou_elev + w_fen, y_trou_fin), (x_trou_elev, y_trou_fin)]
-            msp.add_lwpolyline(trou_pts, close=True, dxfattribs={'layer': "MENUISERIE"})
+            
+            # On stocke l'entité de la polyligne du trou pour le relier à la hachure
+            poly_trou = msp.add_lwpolyline(trou_pts, close=True, dxfattribs={'layer': "MENUISERIE"})
             
             vit_pts = [(x_trou_elev+w_dormant, y_trou_debut+w_dormant), (x_trou_elev + w_fen-w_dormant, y_trou_debut+w_dormant), (x_trou_elev + w_fen-w_dormant, y_trou_fin-w_dormant), (x_trou_elev+w_dormant, y_trou_fin-w_dormant)]
             if type_fen == "Ouvrant (à la française)":
@@ -256,7 +264,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
             msp.add_lwpolyline(vit_pts, close=True, dxfattribs={'layer': "VITRAGE"})
 
         poly_elev = msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
-        dessiner_hachure(msp, poly_elev, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts)
+        dessiner_hachure(msp, poly_elev, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts, hole_poly=poly_trou)
 
         if 'calepinage_l' in couche_ext and couche_ext['calepinage_l'] > 0:
             cal_l = couche_ext['calepinage_l']
@@ -396,4 +404,12 @@ with tab_export:
         ep_totale = sum(c['epaisseur'] for c in st.session_state.couches_generees)
         st.info(f"Épaisseur totale réelle du mur : **{ep_totale} mm**")
         dxf_data = generer_dxf(st.session_state.couches_generees, hauteur_mur, st.session_state.men_config)
-        st.download_button(label="💾 Télécharger les Plans (.dxf)", data=dxf_data, file_name="mur_complet.dxf", mime="application/dxf", use_container_width=True)
+        
+        # CORRECTIF ENCODAGE : On force le téléchargement en binaire pour éviter la corruption du navigateur
+        st.download_button(
+            label="💾 Télécharger les Plans (.dxf)", 
+            data=dxf_data.encode('utf-8'), 
+            file_name="mur_complet.dxf", 
+            mime="application/dxf", 
+            use_container_width=True
+        )
