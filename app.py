@@ -42,8 +42,15 @@ def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle, hole_p
             hatch.dxf.associative = 1
             path.source_boundary_objects = [polyline.dxf.handle]
             polyline.append_reactor_handle(hatch.dxf.handle)
-            cx = sum(p[0] for p in points) / len(points)
-            cy = sum(p[1] for p in points) / len(points)
+            
+            # CORRECTIF: On évite le centre du mur pour le "seed point" !
+            # On le place à 1% près du coin inférieur gauche pour fuir le trou de la fenêtre
+            min_x = min(p[0] for p in points)
+            min_y = min(p[1] for p in points)
+            max_x = max(p[0] for p in points)
+            max_y = max(p[1] for p in points)
+            cx = min_x + (max_x - min_x) * 0.01 
+            cy = min_y + (max_y - min_y) * 0.01
             hatch.set_seed_points([(cx, cy)])
         except Exception:
             pass 
@@ -53,6 +60,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
     longueur_mur = 3000 
+    ep_joint = 8 
     
     a_menuiserie = men_config['active']
     w_fen = men_config['largeur']
@@ -63,16 +71,15 @@ def generer_dxf(couches, hauteur_mur, men_config):
     couleur_fen = COULEURS_MENUISERIE.get(mat_fen, 7)
     y_nu_pose = men_config['profondeur_pose']
     
-    # Dimensions génériques pour les profilés (Dormant et Ouvrant)
-    w_dormant = 45 # Largeur vue de face
-    ep_dormant = 60 # Profondeur dans le mur
+    w_dormant = 45 
+    ep_dormant = 60 
     w_ouvrant = 65 
     ep_ouvrant = 50 
     
     if a_menuiserie:
         doc.layers.add(name="MENUISERIE", color=couleur_fen)
         doc.layers.add(name="VITRAGE", color=5) 
-        doc.layers.add(name="VUE_FOND_ALLEGE", color=8) # Calque fin/gris pour les traits vus en contrebas
+        doc.layers.add(name="VUE_FOND_ALLEGE", color=8) 
         doc.layers.add(name="SYMBOLE_OUVERTURE", color=couleur_fen, linetype="DASHED")
     
     for i, couche in enumerate(couches):
@@ -92,39 +99,68 @@ def generer_dxf(couches, hauteur_mur, men_config):
         mat = MATERIAUX[couche['materiau']]
         nom_calque = f"MUR_{i+1}_{couche['materiau'].upper().replace(' ', '_').replace('/', '_')}"
         
+        # CORRECTIF : Sécurité contre les blocs de 0 mm (x_end - x_start > 0.1)
         def dessiner_bloc(x_start, x_end, y):
-            pts = [(x_start, y), (x_end, y), (x_end, y + ep), (x_start, y + ep)]
-            poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-            dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+            if x_end - x_start > 0.1:
+                pts = [(x_start, y), (x_end, y), (x_end, y + ep), (x_start, y + ep)]
+                poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
 
-        if a_menuiserie:
-            # On dessine les murs de chaque côté
-            dessiner_bloc(0, x_trou_debut, y_plan)
-            dessiner_bloc(x_trou_fin, longueur_mur, y_plan)
-            # ET on dessine les TRAITS DE FOND (Allège) !
-            msp.add_line((x_trou_debut, y_plan), (x_trou_fin, y_plan), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
-            msp.add_line((x_trou_debut, y_plan+ep), (x_trou_fin, y_plan+ep), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
-        else:
-            dessiner_bloc(0, longueur_mur, y_plan)
-            
+        if couche.get('calepinage_l', 0) > 0:
+            cal_l = couche['calepinage_l']
+            x_plan = 0
+            while x_plan < longueur_mur:
+                pan_l = min(cal_l - ep_joint, longueur_mur - x_plan)
+                if pan_l > 0.1:
+                    if a_menuiserie and x_plan + pan_l > x_trou_debut and x_plan < x_trou_fin:
+                        if x_plan < x_trou_debut: dessiner_bloc(x_plan, x_trou_debut, y_plan)
+                        if x_plan + pan_l > x_trou_fin: dessiner_bloc(x_trou_fin, x_plan + pan_l, y_plan)
+                    else:
+                        dessiner_bloc(x_plan, x_plan + pan_l, y_plan)
+                x_plan += cal_l
+                
+        elif couche['type'] == "Continue" or couche.get('orientation') == "Horizontale":
+            if a_menuiserie:
+                dessiner_bloc(0, x_trou_debut, y_plan)
+                dessiner_bloc(x_trou_fin, longueur_mur, y_plan)
+                msp.add_line((x_trou_debut, y_plan), (x_trou_fin, y_plan), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
+                msp.add_line((x_trou_debut, y_plan+ep), (x_trou_fin, y_plan+ep), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
+            else:
+                dessiner_bloc(0, longueur_mur, y_plan)
+                
+        elif couche['type'] == "Structure / Lattage" and couche['orientation'] == "Verticale":
+            x_plan = 0
+            while x_plan < longueur_mur:
+                larg_m = couche.get('largeur_montant', 45)
+                # Ne dessine le montant que s'il n'est pas dans le trou de la fenêtre
+                if not (a_menuiserie and x_plan + larg_m > x_trou_debut and x_plan < x_trou_fin):
+                    dessiner_bloc(x_plan, x_plan + larg_m, y_plan)
+                x_plan += couche.get('entraxe', 600)
+                
+        elif couche['type'] == "Ossature Métallique (Équerres)":
+            x_plan = 0
+            while x_plan < longueur_mur:
+                if not (a_menuiserie and x_plan > x_trou_debut and x_plan < x_trou_fin):
+                    largeur_prof = 40
+                    ep_metal = 3
+                    pts_eq = [(x_plan + largeur_prof/2 - ep_metal/2, y_plan), (x_plan + largeur_prof/2 + ep_metal/2, y_plan), (x_plan + largeur_prof/2 + ep_metal/2, y_plan + ep), (x_plan + largeur_prof/2 - ep_metal/2, y_plan + ep)]
+                    pts_face = [(x_plan, y_plan + ep - ep_metal), (x_plan + largeur_prof, y_plan + ep - ep_metal), (x_plan + largeur_prof, y_plan + ep), (x_plan, y_plan + ep)]
+                    msp.add_lwpolyline(pts_eq, close=True, dxfattribs={'layer': nom_calque})
+                    msp.add_lwpolyline(pts_face, close=True, dxfattribs={'layer': nom_calque})
+                x_plan += couche.get('entraxe', 600)
+
         y_plan += ep
 
     # --- Menuiserie Détaillée (Plan) ---
     if a_menuiserie:
-        # Dormant Gauche & Droit
         msp.add_lwpolyline([(x_trou_debut, y_nu_pose), (x_trou_debut+w_dormant, y_nu_pose), (x_trou_debut+w_dormant, y_nu_pose+ep_dormant), (x_trou_debut, y_nu_pose+ep_dormant)], close=True, dxfattribs={'layer': "MENUISERIE"})
         msp.add_lwpolyline([(x_trou_fin-w_dormant, y_nu_pose), (x_trou_fin, y_nu_pose), (x_trou_fin, y_nu_pose+ep_dormant), (x_trou_fin-w_dormant, y_nu_pose+ep_dormant)], close=True, dxfattribs={'layer': "MENUISERIE"})
-        
         if type_fen == "Ouvrant (à la française)":
-            # Ouvrant (Décalé pour l'effet escalier)
             y_ouv_pose = y_nu_pose + 20
-            # Ouvrant Gauche & Droit
             msp.add_lwpolyline([(x_trou_debut+w_dormant-10, y_ouv_pose), (x_trou_debut+w_dormant-10+w_ouvrant, y_ouv_pose), (x_trou_debut+w_dormant-10+w_ouvrant, y_ouv_pose+ep_ouvrant), (x_trou_debut+w_dormant-10, y_ouv_pose+ep_ouvrant)], close=True, dxfattribs={'layer': "MENUISERIE"})
             msp.add_lwpolyline([(x_trou_fin-w_dormant+10-w_ouvrant, y_ouv_pose), (x_trou_fin-w_dormant+10, y_ouv_pose), (x_trou_fin-w_dormant+10, y_ouv_pose+ep_ouvrant), (x_trou_fin-w_dormant+10-w_ouvrant, y_ouv_pose+ep_ouvrant)], close=True, dxfattribs={'layer': "MENUISERIE"})
-            # Vitrage
             msp.add_line((x_trou_debut+w_dormant-10+w_ouvrant, y_ouv_pose+ep_ouvrant/2), (x_trou_fin-w_dormant+10-w_ouvrant, y_ouv_pose+ep_ouvrant/2), dxfattribs={'layer': "VITRAGE"})
         else:
-            # Fixe (Vitrage direct dans le dormant)
             msp.add_line((x_trou_debut+w_dormant, y_nu_pose+ep_dormant/2), (x_trou_fin-w_dormant, y_nu_pose+ep_dormant/2), dxfattribs={'layer': "VITRAGE"})
 
 
@@ -140,33 +176,53 @@ def generer_dxf(couches, hauteur_mur, men_config):
         mat = MATERIAUX[couche['materiau']]
         nom_calque = f"MUR_{i+1}_{couche['materiau'].upper().replace(' ', '_').replace('/', '_')}"
         
+        # CORRECTIF : Sécurité contre les blocs de 0 mm
         def dessiner_bloc_v(y_start, y_end):
-            pts = [(x_coupe, y_start), (x_coupe + ep, y_start), (x_coupe + ep, y_end), (x_coupe, y_end)]
-            poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-            dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+            if y_end - y_start > 0.1:
+                pts = [(x_coupe, y_start), (x_coupe + ep, y_start), (x_coupe + ep, y_end), (x_coupe, y_end)]
+                poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
 
-        if a_menuiserie:
-            dessiner_bloc_v(y_coupe_base, y_trou_debut) # Allège
-            dessiner_bloc_v(y_trou_fin, y_coupe_base + hauteur_mur) # Imposte
-            # Ligne de fond (Le mur vu de face au loin)
-            msp.add_line((x_coupe, y_trou_debut), (x_coupe, y_trou_fin), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
-            msp.add_line((x_coupe+ep, y_trou_debut), (x_coupe+ep, y_trou_fin), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
-        else:
-            dessiner_bloc_v(y_coupe_base, y_coupe_base + hauteur_mur)
+        if couche.get('calepinage_h', 0) > 0:
+            cal_h = couche['calepinage_h']
+            y_c = y_coupe_base
+            while y_c < y_coupe_base + hauteur_mur:
+                pan_h = min(cal_h - ep_joint, (y_coupe_base + hauteur_mur) - y_c)
+                if pan_h > 0.1:
+                    if a_menuiserie and y_c + pan_h > y_trou_debut and y_c < y_trou_fin:
+                        if y_c < y_trou_debut: dessiner_bloc_v(y_c, y_trou_debut)
+                        if y_c + pan_h > y_trou_fin: dessiner_bloc_v(y_trou_fin, y_c + pan_h)
+                    else:
+                        dessiner_bloc_v(y_c, y_c + pan_h)
+                y_c += cal_h
+                
+        elif couche['type'] == "Continue" or couche.get('orientation') == "Verticale":
+            if a_menuiserie:
+                dessiner_bloc_v(y_coupe_base, y_trou_debut) 
+                dessiner_bloc_v(y_trou_fin, y_coupe_base + hauteur_mur) 
+                msp.add_line((x_coupe, y_trou_debut), (x_coupe, y_trou_fin), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
+                msp.add_line((x_coupe+ep, y_trou_debut), (x_coupe+ep, y_trou_fin), dxfattribs={'layer': 'VUE_FOND_ALLEGE'})
+            else:
+                dessiner_bloc_v(y_coupe_base, y_coupe_base + hauteur_mur)
+                
+        elif couche['type'] == "Structure / Lattage" and couche['orientation'] == "Horizontale":
+            y_tass = y_coupe_base
+            while y_tass < (y_coupe_base + hauteur_mur):
+                h_tass = min(couche.get('largeur_montant', 45), (y_coupe_base + hauteur_mur) - y_tass)
+                if not (a_menuiserie and y_tass + h_tass > y_trou_debut and y_tass < y_trou_fin):
+                    dessiner_bloc_v(y_tass, y_tass + h_tass)
+                y_tass += couche.get('entraxe', 400)
+                
         x_coupe += ep
 
     # --- Menuiserie Détaillée (Coupe) ---
     if a_menuiserie:
-        # Dormant Bas & Haut
         msp.add_lwpolyline([(y_nu_pose, y_trou_debut), (y_nu_pose+ep_dormant, y_trou_debut), (y_nu_pose+ep_dormant, y_trou_debut+w_dormant), (y_nu_pose, y_trou_debut+w_dormant)], close=True, dxfattribs={'layer': "MENUISERIE"})
         msp.add_lwpolyline([(y_nu_pose, y_trou_fin-w_dormant), (y_nu_pose+ep_dormant, y_trou_fin-w_dormant), (y_nu_pose+ep_dormant, y_trou_fin), (y_nu_pose, y_trou_fin)], close=True, dxfattribs={'layer': "MENUISERIE"})
-        
         if type_fen == "Ouvrant (à la française)":
             y_ouv_pose = y_nu_pose + 20
-            # Ouvrant Bas & Haut
             msp.add_lwpolyline([(y_ouv_pose, y_trou_debut+w_dormant-10), (y_ouv_pose+ep_ouvrant, y_trou_debut+w_dormant-10), (y_ouv_pose+ep_ouvrant, y_trou_debut+w_dormant-10+w_ouvrant), (y_ouv_pose, y_trou_debut+w_dormant-10+w_ouvrant)], close=True, dxfattribs={'layer': "MENUISERIE"})
             msp.add_lwpolyline([(y_ouv_pose, y_trou_fin-w_dormant+10-w_ouvrant), (y_ouv_pose+ep_ouvrant, y_trou_fin-w_dormant+10-w_ouvrant), (y_ouv_pose+ep_ouvrant, y_trou_fin-w_dormant+10), (y_ouv_pose, y_trou_fin-w_dormant+10)], close=True, dxfattribs={'layer': "MENUISERIE"})
-            # Vitrage
             msp.add_line((y_ouv_pose+ep_ouvrant/2, y_trou_debut+w_dormant-10+w_ouvrant), (y_ouv_pose+ep_ouvrant/2, y_trou_fin-w_dormant+10-w_ouvrant), dxfattribs={'layer': "VITRAGE"})
         else:
             msp.add_line((y_nu_pose+ep_dormant/2, y_trou_debut+w_dormant), (y_nu_pose+ep_dormant/2, y_trou_fin-w_dormant), dxfattribs={'layer': "VITRAGE"})
@@ -178,7 +234,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
         x_elev = x_coupe + 1500 
         msp.add_text("VUE EN ELEVATION (Façade)", dxfattribs={'height': 50}).set_placement((x_elev, y_coupe_base - 150))
         doc.layers.add(name="VUE_ELEVATION", color=mat_ext['couleur'])
-        doc.layers.add(name="VUE_ELEVATION_JOINTS", color=252) # Couleur grise pour les joints
+        doc.layers.add(name="VUE_ELEVATION_JOINTS", color=252) 
         
         pts_elev = [(x_elev, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
         
@@ -186,35 +242,26 @@ def generer_dxf(couches, hauteur_mur, men_config):
         if a_menuiserie:
             x_trou_elev = x_elev + x_trou_debut
             trou_pts = [(x_trou_elev, y_trou_debut), (x_trou_elev + w_fen, y_trou_debut), (x_trou_elev + w_fen, y_trou_fin), (x_trou_elev, y_trou_fin)]
-            
-            # Dormant
             msp.add_lwpolyline(trou_pts, close=True, dxfattribs={'layer': "MENUISERIE"})
             
             vit_pts = [(x_trou_elev+w_dormant, y_trou_debut+w_dormant), (x_trou_elev + w_fen-w_dormant, y_trou_debut+w_dormant), (x_trou_elev + w_fen-w_dormant, y_trou_fin-w_dormant), (x_trou_elev+w_dormant, y_trou_fin-w_dormant)]
-            
             if type_fen == "Ouvrant (à la française)":
-                # Ouvrant
                 ouv_pts = [(x_trou_elev+w_dormant-10, y_trou_debut+w_dormant-10), (x_trou_elev+w_fen-w_dormant+10, y_trou_debut+w_dormant-10), (x_trou_elev+w_fen-w_dormant+10, y_trou_fin-w_dormant+10), (x_trou_elev+w_dormant-10, y_trou_fin-w_dormant+10)]
                 msp.add_lwpolyline(ouv_pts, close=True, dxfattribs={'layer': "MENUISERIE"})
                 vit_pts = [(x_trou_elev+w_dormant-10+w_ouvrant, y_trou_debut+w_dormant-10+w_ouvrant), (x_trou_elev+w_fen-w_dormant+10-w_ouvrant, y_trou_debut+w_dormant-10+w_ouvrant), (x_trou_elev+w_fen-w_dormant+10-w_ouvrant, y_trou_fin-w_dormant+10-w_ouvrant), (x_trou_elev+w_dormant-10+w_ouvrant, y_trou_fin-w_dormant+10-w_ouvrant)]
-                
-                # Symbole d'ouverture (Triangle)
                 mid_y = (y_trou_debut + y_trou_fin) / 2
                 msp.add_line((vit_pts[0][0], vit_pts[0][1]), (vit_pts[1][0], mid_y), dxfattribs={'layer': "SYMBOLE_OUVERTURE"})
                 msp.add_line((vit_pts[1][0], mid_y), (vit_pts[0][0], vit_pts[2][1]), dxfattribs={'layer': "SYMBOLE_OUVERTURE"})
 
             msp.add_lwpolyline(vit_pts, close=True, dxfattribs={'layer': "VITRAGE"})
 
-        # Hachure du mur (avec le trou de la fenêtre)
         poly_elev = msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
         dessiner_hachure(msp, poly_elev, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts)
 
-        # --- NOUVEAU SYSTÈME DE CALEPINAGE (Traits continus cassés par la fenêtre) ---
         if 'calepinage_l' in couche_ext and couche_ext['calepinage_l'] > 0:
             cal_l = couche_ext['calepinage_l']
             cal_h = couche_ext['calepinage_h']
             
-            # Lignes verticales
             cal_x = x_elev + cal_l
             while cal_x < x_elev + longueur_mur:
                 if a_menuiserie and x_trou_elev < cal_x < x_trou_elev + w_fen:
@@ -224,7 +271,6 @@ def generer_dxf(couches, hauteur_mur, men_config):
                     msp.add_line((cal_x, y_coupe_base), (cal_x, y_coupe_base + hauteur_mur), dxfattribs={'layer': "VUE_ELEVATION_JOINTS"})
                 cal_x += cal_l
                 
-            # Lignes horizontales
             cal_y = y_coupe_base + cal_h
             while cal_y < y_coupe_base + hauteur_mur:
                 if a_menuiserie and y_trou_debut < cal_y < y_trou_fin:
