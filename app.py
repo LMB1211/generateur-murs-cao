@@ -32,38 +32,29 @@ MATERIAUX = {
 COULEURS_MENUISERIE = {"Bois": 34, "Aluminium": 250, "PVC": 7, "Mixte Bois/Alu": 32}
 
 def nettoyer_nom(texte):
-    # Enlève les accents et caractères spéciaux pour AutoCAD
     texte = unicodedata.normalize('NFKD', texte).encode('ASCII', 'ignore').decode('utf-8')
     return texte.upper().replace(' ', '_').replace('/', '_')
 
-# --- LE CORRECTIF : HACHURES SÉCURISÉES ---
-def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle, hole_pts=None):
+# --- FONCTION ÉPURÉE : HACHURES "MORTES" MAIS 100% STABLES ---
+def dessiner_hachure(msp, points, layer, motif, echelle, angle, hole_pts=None):
     if motif is not None:
         try:
             hatch = msp.add_hatch(color=256, dxfattribs={'layer': layer})
             hatch.set_pattern_fill(motif, scale=echelle, angle=angle)
             
+            # Contour principal
+            hatch.paths.add_polyline_path(points, is_closed=True)
+            
+            # Trou (si existant)
             if hole_pts:
-                # 🚨 RÈGLE D'OR AUTOCAD : S'il y a un trou, on DÉSACTIVE l'associativité !
-                # AutoCAD refuse les fichiers générés avec des îles associatives non-natives.
-                hatch.paths.add_polyline_path(points, is_closed=True, flags=1) # Contour (External)
-                hatch.paths.add_polyline_path(hole_pts, is_closed=True, flags=0) # Trou (Default)
-                hatch.dxf.associative = 0 
-            else:
-                # Hachure simple (Plan / Coupe) : Associativité ACTIVÉE !
-                path = hatch.paths.add_polyline_path(points, is_closed=True)
-                hatch.dxf.associative = 1
-                path.source_boundary_objects = [polyline.dxf.handle]
-                polyline.append_reactor_handle(hatch.dxf.handle)
+                hatch.paths.add_polyline_path(hole_pts, is_closed=True)
                 
-                # Seed point sécurisé
-                cx = sum(p[0] for p in points) / len(points)
-                cy = sum(p[1] for p in points) / len(points)
-                hatch.set_seed_points([(cx, cy)])
+            # SUPPRESSION DE L'ASSOCIATIVITÉ (La cause des crashs AutoCAD)
+            hatch.dxf.associative = 0 
         except Exception:
             pass 
 
-# --- 2. MOTEUR DE DESSIN DXF ---
+# --- MOTEUR DE DESSIN DXF ---
 def generer_dxf(couches, hauteur_mur, men_config):
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
@@ -109,10 +100,10 @@ def generer_dxf(couches, hauteur_mur, men_config):
         nom_calque = f"MUR_{i+1}_{nettoyer_nom(couche['materiau'])}"
         
         def dessiner_bloc(x_start, x_end, y):
-            if x_end - x_start > 0.1: # Sécurité
+            if x_end - x_start > 0.1: 
                 pts = [(x_start, y), (x_end, y), (x_end, y + ep), (x_start, y + ep)]
-                poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-                dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
 
         if couche.get('calepinage_l', 0) > 0:
             cal_l = couche['calepinage_l']
@@ -186,8 +177,8 @@ def generer_dxf(couches, hauteur_mur, men_config):
         def dessiner_bloc_v(y_start, y_end):
             if y_end - y_start > 0.1:
                 pts = [(x_coupe, y_start), (x_coupe + ep, y_start), (x_coupe + ep, y_end), (x_coupe, y_end)]
-                poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
-                dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
+                msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
+                dessiner_hachure(msp, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
 
         if couche.get('calepinage_h', 0) > 0:
             cal_h = couche['calepinage_h']
@@ -262,9 +253,9 @@ def generer_dxf(couches, hauteur_mur, men_config):
 
             msp.add_lwpolyline(vit_pts, close=True, dxfattribs={'layer': "VITRAGE"})
 
-        poly_elev = msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
-        # Appel avec hole_pts (ce qui désactivera l'associativité pour ne pas faire crasher AutoCAD)
-        dessiner_hachure(msp, poly_elev, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts)
+        msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+        # Appel propre : Hachure simple, 0% Associative.
+        dessiner_hachure(msp, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts)
 
         if 'calepinage_l' in couche_ext and couche_ext['calepinage_l'] > 0:
             cal_l = couche_ext['calepinage_l']
@@ -290,7 +281,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
 
     buffer = io.StringIO()
     doc.write(buffer)
-    return buffer.getvalue().encode('utf-8')
+    return buffer.getvalue()
 
 
 # --- 3. INTERFACE UTILISATEUR ---
