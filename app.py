@@ -1,7 +1,6 @@
 import streamlit as st
 import ezdxf
 import io
-import unicodedata
 
 # --- 1. BIBLIOTHÈQUE ARCHITECTURALE ---
 MATERIAUX = {
@@ -31,28 +30,19 @@ MATERIAUX = {
 
 COULEURS_MENUISERIE = {"Bois": 34, "Aluminium": 250, "PVC": 7, "Mixte Bois/Alu": 32}
 
-def nettoyer_nom(texte):
-    texte = unicodedata.normalize('NFKD', texte).encode('ASCII', 'ignore').decode('utf-8')
-    return texte.upper().replace(' ', '_').replace('/', '_')
-
-# --- FONCTION ÉPURÉE : HACHURES "MORTES" MAIS 100% STABLES ---
-def dessiner_hachure(msp, points, layer, motif, echelle, angle, hole_pts=None):
+# --- FONCTION INCASSABLE : AUCUN TROU ---
+def dessiner_hachure(msp, points, layer, motif, echelle, angle):
     if motif is not None:
         try:
             hatch = msp.add_hatch(color=256, dxfattribs={'layer': layer})
             hatch.set_pattern_fill(motif, scale=echelle, angle=angle)
-            
-            # Contour principal
             hatch.paths.add_polyline_path(points, is_closed=True)
-            
-            # Trou (si existant)
-            if hole_pts:
-                hatch.paths.add_polyline_path(hole_pts, is_closed=True)
-                
-            # SUPPRESSION DE L'ASSOCIATIVITÉ (La cause des crashs AutoCAD)
-            hatch.dxf.associative = 0 
+            hatch.dxf.associative = 0 # Désactivé par sécurité
         except Exception:
             pass 
+
+def nettoyer_nom(texte):
+    return texte.upper().replace(' ', '_').replace('/', '_').replace('É', 'E').replace('È', 'E')
 
 # --- MOTEUR DE DESSIN DXF ---
 def generer_dxf(couches, hauteur_mur, men_config):
@@ -233,12 +223,31 @@ def generer_dxf(couches, hauteur_mur, men_config):
         doc.layers.add(name="VUE_ELEVATION", color=mat_ext['couleur'])
         doc.layers.add(name="VUE_ELEVATION_JOINTS", color=252) 
         
-        pts_elev = [(x_elev, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
-        
-        trou_pts = None
-        
+        # METHODE GEOMETRIQUE INCASSABLE POUR L'ELEVATION
         if a_menuiserie:
             x_trou_elev = x_elev + x_trou_debut
+            
+            # 1. Rectangle Gauche
+            pts_g = [(x_elev, y_coupe_base), (x_trou_elev, y_coupe_base), (x_trou_elev, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
+            msp.add_lwpolyline(pts_g, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+            dessiner_hachure(msp, pts_g, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
+            
+            # 2. Rectangle Droite
+            pts_d = [(x_trou_elev + w_fen, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_trou_elev + w_fen, y_coupe_base + hauteur_mur)]
+            msp.add_lwpolyline(pts_d, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+            dessiner_hachure(msp, pts_d, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
+            
+            # 3. Rectangle Allège (Bas)
+            pts_b = [(x_trou_elev, y_coupe_base), (x_trou_elev + w_fen, y_coupe_base), (x_trou_elev + w_fen, y_trou_debut), (x_trou_elev, y_trou_debut)]
+            msp.add_lwpolyline(pts_b, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+            dessiner_hachure(msp, pts_b, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
+            
+            # 4. Rectangle Imposte (Haut)
+            pts_h = [(x_trou_elev, y_trou_fin), (x_trou_elev + w_fen, y_trou_fin), (x_trou_elev + w_fen, y_coupe_base + hauteur_mur), (x_trou_elev, y_coupe_base + hauteur_mur)]
+            msp.add_lwpolyline(pts_h, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+            dessiner_hachure(msp, pts_h, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
+
+            # Dessin de la Menuiserie
             trou_pts = [(x_trou_elev, y_trou_debut), (x_trou_elev + w_fen, y_trou_debut), (x_trou_elev + w_fen, y_trou_fin), (x_trou_elev, y_trou_fin)]
             msp.add_lwpolyline(trou_pts, close=True, dxfattribs={'layer': "MENUISERIE"})
             
@@ -253,9 +262,10 @@ def generer_dxf(couches, hauteur_mur, men_config):
 
             msp.add_lwpolyline(vit_pts, close=True, dxfattribs={'layer': "VITRAGE"})
 
-        msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
-        # Appel propre : Hachure simple, 0% Associative.
-        dessiner_hachure(msp, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts)
+        else:
+            pts_elev = [(x_elev, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
+            msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
+            dessiner_hachure(msp, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
 
         if 'calepinage_l' in couche_ext and couche_ext['calepinage_l'] > 0:
             cal_l = couche_ext['calepinage_l']
@@ -281,7 +291,8 @@ def generer_dxf(couches, hauteur_mur, men_config):
 
     buffer = io.StringIO()
     doc.write(buffer)
-    return buffer.getvalue()
+    # L'encodage direct en UTF-8 garantit que Streamlit n'altèrera pas les lignes
+    return buffer.getvalue().encode('utf-8')
 
 
 # --- 3. INTERFACE UTILISATEUR ---
@@ -327,7 +338,7 @@ with tab_men:
         with c1:
             type_fen = st.radio("Type d'ouverture", ["Ouvrant (à la française)", "Châssis Fixe"])
             mat_fen = st.selectbox("Matériau du châssis", ["Aluminium", "PVC", "Bois", "Mixte Bois/Alu"])
-            w_fen = st.number_input("Largeur Tableau (mm)", value=1200, step=100)
+            w_fen = st.number_input("Largeur Tableau (mm)", max_value=2800, value=1200, step=100)
             h_fen = st.number_input("Hauteur Tableau (mm)", value=1350, step=50)
             allege = st.number_input("Hauteur de l'allège (mm du sol)", value=900, step=50)
             
