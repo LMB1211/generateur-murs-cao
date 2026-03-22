@@ -1,6 +1,7 @@
 import streamlit as st
 import ezdxf
 import io
+import unicodedata
 
 # --- 1. BIBLIOTHÈQUE ARCHITECTURALE ---
 MATERIAUX = {
@@ -30,35 +31,35 @@ MATERIAUX = {
 
 COULEURS_MENUISERIE = {"Bois": 34, "Aluminium": 250, "PVC": 7, "Mixte Bois/Alu": 32}
 
-# --- CORRECTIF : GESTION DES TROUS ASSOCIATIFS ---
-def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle, hole_pts=None, hole_poly=None):
+def nettoyer_nom(texte):
+    # Enlève les accents et caractères spéciaux pour AutoCAD
+    texte = unicodedata.normalize('NFKD', texte).encode('ASCII', 'ignore').decode('utf-8')
+    return texte.upper().replace(' ', '_').replace('/', '_')
+
+# --- LE CORRECTIF : HACHURES SÉCURISÉES ---
+def dessiner_hachure(msp, polyline, points, layer, motif, echelle, angle, hole_pts=None):
     if motif is not None:
         try:
             hatch = msp.add_hatch(color=256, dxfattribs={'layer': layer})
-            hatch.dxf.hatch_style = 0 
             hatch.set_pattern_fill(motif, scale=echelle, angle=angle)
             
-            # Contour principal
-            path = hatch.paths.add_polyline_path(points, is_closed=True)
-            path.source_boundary_objects = [polyline.dxf.handle]
-            polyline.append_reactor_handle(hatch.dxf.handle)
-            
-            # Contour du trou (si existant) ET on le relie !
-            if hole_pts and hole_poly:
-                path2 = hatch.paths.add_polyline_path(hole_pts, is_closed=True)
-                path2.source_boundary_objects = [hole_poly.dxf.handle]
-                hole_poly.append_reactor_handle(hatch.dxf.handle)
-            
-            hatch.dxf.associative = 1
-            
-            # Point de germe sécurisé (Évite le centre qui pourrait être dans la fenêtre)
-            min_x = min(p[0] for p in points)
-            min_y = min(p[1] for p in points)
-            max_x = max(p[0] for p in points)
-            max_y = max(p[1] for p in points)
-            cx = min_x + (max_x - min_x) * 0.05 
-            cy = min_y + (max_y - min_y) * 0.05
-            hatch.set_seed_points([(cx, cy)])
+            if hole_pts:
+                # 🚨 RÈGLE D'OR AUTOCAD : S'il y a un trou, on DÉSACTIVE l'associativité !
+                # AutoCAD refuse les fichiers générés avec des îles associatives non-natives.
+                hatch.paths.add_polyline_path(points, is_closed=True, flags=1) # Contour (External)
+                hatch.paths.add_polyline_path(hole_pts, is_closed=True, flags=0) # Trou (Default)
+                hatch.dxf.associative = 0 
+            else:
+                # Hachure simple (Plan / Coupe) : Associativité ACTIVÉE !
+                path = hatch.paths.add_polyline_path(points, is_closed=True)
+                hatch.dxf.associative = 1
+                path.source_boundary_objects = [polyline.dxf.handle]
+                polyline.append_reactor_handle(hatch.dxf.handle)
+                
+                # Seed point sécurisé
+                cx = sum(p[0] for p in points) / len(points)
+                cy = sum(p[1] for p in points) / len(points)
+                hatch.set_seed_points([(cx, cy)])
         except Exception:
             pass 
 
@@ -90,13 +91,14 @@ def generer_dxf(couches, hauteur_mur, men_config):
         doc.layers.add(name="SYMBOLE_OUVERTURE", color=couleur_fen, linetype="DASHED")
     
     for i, couche in enumerate(couches):
-        mat_nom = couche['materiau']
-        nom_calque = f"MUR_{i+1}_{mat_nom.upper().replace(' ', '_').replace('/', '_')}"
-        doc.layers.add(name=nom_calque, color=MATERIAUX[mat_nom]['couleur'])
-        doc.layers.add(name=f"{nom_calque}_HACH", color=MATERIAUX[mat_nom]['couleur'])
+        mat_nom = nettoyer_nom(couche['materiau'])
+        nom_calque = f"MUR_{i+1}_{mat_nom}"
+        if nom_calque not in doc.layers:
+            doc.layers.add(name=nom_calque, color=MATERIAUX[couche['materiau']]['couleur'])
+            doc.layers.add(name=f"{nom_calque}_HACH", color=MATERIAUX[couche['materiau']]['couleur'])
 
     # --- VUE EN PLAN ---
-    msp.add_text("VUE EN PLAN (Coupe sur fenêtre)", dxfattribs={'height': 50}).set_placement((0, -150))
+    msp.add_text("VUE EN PLAN (Coupe sur fenetre)", dxfattribs={'height': 50}).set_placement((0, -150))
     y_plan = 0
     x_trou_debut = (longueur_mur - w_fen) / 2
     x_trou_fin = x_trou_debut + w_fen
@@ -104,10 +106,10 @@ def generer_dxf(couches, hauteur_mur, men_config):
     for i, couche in enumerate(couches):
         ep = couche['epaisseur']
         mat = MATERIAUX[couche['materiau']]
-        nom_calque = f"MUR_{i+1}_{couche['materiau'].upper().replace(' ', '_').replace('/', '_')}"
+        nom_calque = f"MUR_{i+1}_{nettoyer_nom(couche['materiau'])}"
         
         def dessiner_bloc(x_start, x_end, y):
-            if x_end - x_start > 0.1: # Sécurité AutoCAD
+            if x_end - x_start > 0.1: # Sécurité
                 pts = [(x_start, y), (x_end, y), (x_end, y + ep), (x_start, y + ep)]
                 poly = msp.add_lwpolyline(pts, close=True, dxfattribs={'layer': nom_calque})
                 dessiner_hachure(msp, poly, pts, f"{nom_calque}_HACH", mat['motif'], mat['echelle'], mat['angle'])
@@ -179,7 +181,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
     for i, couche in enumerate(couches):
         ep = couche['epaisseur']
         mat = MATERIAUX[couche['materiau']]
-        nom_calque = f"MUR_{i+1}_{couche['materiau'].upper().replace(' ', '_').replace('/', '_')}"
+        nom_calque = f"MUR_{i+1}_{nettoyer_nom(couche['materiau'])}"
         
         def dessiner_bloc_v(y_start, y_end):
             if y_end - y_start > 0.1:
@@ -236,21 +238,18 @@ def generer_dxf(couches, hauteur_mur, men_config):
         couche_ext = couches[-1]
         mat_ext = MATERIAUX[couche_ext['materiau']]
         x_elev = x_coupe + 1500 
-        msp.add_text("VUE EN ELEVATION (Façade)", dxfattribs={'height': 50}).set_placement((x_elev, y_coupe_base - 150))
+        msp.add_text("VUE EN ELEVATION (Facade)", dxfattribs={'height': 50}).set_placement((x_elev, y_coupe_base - 150))
         doc.layers.add(name="VUE_ELEVATION", color=mat_ext['couleur'])
         doc.layers.add(name="VUE_ELEVATION_JOINTS", color=252) 
         
         pts_elev = [(x_elev, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
         
         trou_pts = None
-        poly_trou = None
         
         if a_menuiserie:
             x_trou_elev = x_elev + x_trou_debut
             trou_pts = [(x_trou_elev, y_trou_debut), (x_trou_elev + w_fen, y_trou_debut), (x_trou_elev + w_fen, y_trou_fin), (x_trou_elev, y_trou_fin)]
-            
-            # On stocke l'entité de la polyligne du trou pour le relier à la hachure
-            poly_trou = msp.add_lwpolyline(trou_pts, close=True, dxfattribs={'layer': "MENUISERIE"})
+            msp.add_lwpolyline(trou_pts, close=True, dxfattribs={'layer': "MENUISERIE"})
             
             vit_pts = [(x_trou_elev+w_dormant, y_trou_debut+w_dormant), (x_trou_elev + w_fen-w_dormant, y_trou_debut+w_dormant), (x_trou_elev + w_fen-w_dormant, y_trou_fin-w_dormant), (x_trou_elev+w_dormant, y_trou_fin-w_dormant)]
             if type_fen == "Ouvrant (à la française)":
@@ -264,7 +263,8 @@ def generer_dxf(couches, hauteur_mur, men_config):
             msp.add_lwpolyline(vit_pts, close=True, dxfattribs={'layer': "VITRAGE"})
 
         poly_elev = msp.add_lwpolyline(pts_elev, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
-        dessiner_hachure(msp, poly_elev, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts, hole_poly=poly_trou)
+        # Appel avec hole_pts (ce qui désactivera l'associativité pour ne pas faire crasher AutoCAD)
+        dessiner_hachure(msp, poly_elev, pts_elev, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'], hole_pts=trou_pts)
 
         if 'calepinage_l' in couche_ext and couche_ext['calepinage_l'] > 0:
             cal_l = couche_ext['calepinage_l']
@@ -290,7 +290,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
 
     buffer = io.StringIO()
     doc.write(buffer)
-    return buffer.getvalue()
+    return buffer.getvalue().encode('utf-8')
 
 
 # --- 3. INTERFACE UTILISATEUR ---
@@ -405,10 +405,9 @@ with tab_export:
         st.info(f"Épaisseur totale réelle du mur : **{ep_totale} mm**")
         dxf_data = generer_dxf(st.session_state.couches_generees, hauteur_mur, st.session_state.men_config)
         
-        # CORRECTIF ENCODAGE : On force le téléchargement en binaire pour éviter la corruption du navigateur
         st.download_button(
             label="💾 Télécharger les Plans (.dxf)", 
-            data=dxf_data.encode('utf-8'), 
+            data=dxf_data, 
             file_name="mur_complet.dxf", 
             mime="application/dxf", 
             use_container_width=True
