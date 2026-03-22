@@ -1,52 +1,57 @@
 import streamlit as st
 import ezdxf
 import io
+import tempfile
+import os
+import unicodedata
 
-# --- 1. BIBLIOTHÈQUE ARCHITECTURALE ---
+# --- 1. BIBLIOTHÈQUE ARCHITECTURALE (ÉCHELLES CORRIGÉES POUR ÉVITER LE CRASH AUTOCAD) ---
+# Les échelles ont été multipliées par 20 à 50 pour être adaptées au dessin en Millimètres
 MATERIAUX = {
-    "Béton armé": {"motif": "AR-CONC", "echelle": 0.5, "angle": 0, "couleur": 1, "motif_elev": "AR-CONC", "echelle_elev": 1.0, "angle_elev": 0},
-    "Bloc béton (Parpaing)": {"motif": "AR-B816", "echelle": 0.5, "angle": 0, "couleur": 8, "motif_elev": "AR-B816", "echelle_elev": 1.0, "angle_elev": 0},
-    "Brique creuse": {"motif": "ANSI32", "echelle": 1.0, "angle": 0, "couleur": 12, "motif_elev": "AR-BRSTD", "echelle_elev": 1.0, "angle_elev": 0},
-    "Brique Monomur": {"motif": "ANSI32", "echelle": 2.0, "angle": 45, "couleur": 12, "motif_elev": "AR-BRSTD", "echelle_elev": 1.0, "angle_elev": 0},
-    "Bois massif": {"motif": "ANSI31", "echelle": 1.5, "angle": 0, "couleur": 32, "motif_elev": "LINE", "echelle_elev": 2.0, "angle_elev": 90},
-    "Métal (Acier/Alu)": {"motif": "ANSI31", "echelle": 0.5, "angle": 45, "couleur": 250, "motif_elev": "SOLID", "echelle_elev": 1.0, "angle_elev": 0},
-    "Isolant rigide (PSE/PUR)": {"motif": "ANSI38", "echelle": 1.0, "angle": 0, "couleur": 3, "motif_elev": "ANSI38", "echelle_elev": 2.0, "angle_elev": 0},
-    "Isolant souple (Laine minérale)": {"motif": "HONEY", "echelle": 2.0, "angle": 0, "couleur": 3, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
-    "Isolant naturel (Fibre bois)": {"motif": "FLEX", "echelle": 1.5, "angle": 0, "couleur": 50, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
-    "Enduit extérieur": {"motif": "AR-SAND", "echelle": 0.2, "angle": 0, "couleur": 40, "motif_elev": "AR-SAND", "echelle_elev": 0.5, "angle_elev": 0},
-    "Bardage bois (Horizontal)": {"motif": "ANSI31", "echelle": 1.0, "angle": 0, "couleur": 34, "motif_elev": "LINE", "echelle_elev": 15.0, "angle_elev": 0},
-    "Bardage bois (Vertical)": {"motif": "ANSI31", "echelle": 1.0, "angle": 0, "couleur": 34, "motif_elev": "LINE", "echelle_elev": 15.0, "angle_elev": 90},
-    "Zinc (Joint debout)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 5, "motif_elev": "LINE", "echelle_elev": 40.0, "angle_elev": 90},
+    "Béton armé": {"motif": "AR-CONC", "echelle": 15.0, "angle": 0, "couleur": 1, "motif_elev": "AR-CONC", "echelle_elev": 20.0, "angle_elev": 0},
+    "Bloc béton (Parpaing)": {"motif": "AR-B816", "echelle": 15.0, "angle": 0, "couleur": 8, "motif_elev": "AR-B816", "echelle_elev": 20.0, "angle_elev": 0},
+    "Brique creuse": {"motif": "ANSI32", "echelle": 20.0, "angle": 0, "couleur": 12, "motif_elev": "AR-BRSTD", "echelle_elev": 20.0, "angle_elev": 0},
+    "Brique Monomur": {"motif": "ANSI32", "echelle": 30.0, "angle": 45, "couleur": 12, "motif_elev": "AR-BRSTD", "echelle_elev": 20.0, "angle_elev": 0},
+    "Bois massif": {"motif": "ANSI31", "echelle": 25.0, "angle": 0, "couleur": 32, "motif_elev": "LINE", "echelle_elev": 40.0, "angle_elev": 90},
+    "Métal (Acier/Alu)": {"motif": "ANSI31", "echelle": 10.0, "angle": 45, "couleur": 250, "motif_elev": "SOLID", "echelle_elev": 1.0, "angle_elev": 0},
+    "Isolant rigide (PSE/PUR)": {"motif": "ANSI38", "echelle": 20.0, "angle": 0, "couleur": 3, "motif_elev": "ANSI38", "echelle_elev": 40.0, "angle_elev": 0},
+    "Isolant souple (Laine minérale)": {"motif": "HONEY", "echelle": 40.0, "angle": 0, "couleur": 3, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
+    "Isolant naturel (Fibre bois)": {"motif": "FLEX", "echelle": 30.0, "angle": 0, "couleur": 50, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
+    "Enduit extérieur": {"motif": "AR-SAND", "echelle": 10.0, "angle": 0, "couleur": 40, "motif_elev": "AR-SAND", "echelle_elev": 15.0, "angle_elev": 0},
+    "Bardage bois (Horizontal)": {"motif": "ANSI31", "echelle": 20.0, "angle": 0, "couleur": 34, "motif_elev": "LINE", "echelle_elev": 80.0, "angle_elev": 0},
+    "Bardage bois (Vertical)": {"motif": "ANSI31", "echelle": 20.0, "angle": 0, "couleur": 34, "motif_elev": "LINE", "echelle_elev": 80.0, "angle_elev": 90},
+    "Zinc (Joint debout)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 5, "motif_elev": "LINE", "echelle_elev": 100.0, "angle_elev": 90},
     "Céramique / Terre cuite": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 14, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
-    "Acier nervuré (Bac acier)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 5, "motif_elev": "LINE", "echelle_elev": 20.0, "angle_elev": 90},
+    "Acier nervuré (Bac acier)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 5, "motif_elev": "LINE", "echelle_elev": 60.0, "angle_elev": 90},
     "Panneau Fibre-ciment": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 250, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
     "Plaque de plâtre (BA13/Fermacell)": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 4, "motif_elev": "SOLID", "echelle_elev": 1.0, "angle_elev": 0},
-    "Panneau OSB / Contreplaqué": {"motif": "ANSI31", "echelle": 0.5, "angle": 90, "couleur": 36, "motif_elev": "AR-SAND", "echelle_elev": 1.0, "angle_elev": 0},
-    "Carrelage": {"motif": "NET", "echelle": 1.0, "angle": 0, "couleur": 2, "motif_elev": "NET", "echelle_elev": 15.0, "angle_elev": 0},
+    "Panneau OSB / Contreplaqué": {"motif": "ANSI31", "echelle": 10.0, "angle": 90, "couleur": 36, "motif_elev": "AR-SAND", "echelle_elev": 15.0, "angle_elev": 0},
+    "Carrelage": {"motif": "NET", "echelle": 30.0, "angle": 0, "couleur": 2, "motif_elev": "NET", "echelle_elev": 100.0, "angle_elev": 0},
     "Pare-pluie / Pare-vapeur": {"motif": "SOLID", "echelle": 1.0, "angle": 0, "couleur": 6, "motif_elev": "SOLID", "echelle_elev": 1.0, "angle_elev": 0},
     "Vide / Lame d'air": {"motif": None, "echelle": 1.0, "angle": 0, "couleur": 7, "motif_elev": None, "echelle_elev": 1.0, "angle_elev": 0},
-    "Colle / Mortier": {"motif": "AR-SAND", "echelle": 0.1, "angle": 0, "couleur": 252, "motif_elev": "AR-SAND", "echelle_elev": 1.0, "angle_elev": 0}
+    "Colle / Mortier": {"motif": "AR-SAND", "echelle": 5.0, "angle": 0, "couleur": 252, "motif_elev": "AR-SAND", "echelle_elev": 10.0, "angle_elev": 0}
 }
 
 COULEURS_MENUISERIE = {"Bois": 34, "Aluminium": 250, "PVC": 7, "Mixte Bois/Alu": 32}
 
-# --- FONCTION INCASSABLE : AUCUN TROU ---
+def nettoyer_nom(texte):
+    texte = unicodedata.normalize('NFKD', texte).encode('ASCII', 'ignore').decode('utf-8')
+    return texte.upper().replace(' ', '_').replace('/', '_')
+
 def dessiner_hachure(msp, points, layer, motif, echelle, angle):
     if motif is not None:
         try:
             hatch = msp.add_hatch(color=256, dxfattribs={'layer': layer})
             hatch.set_pattern_fill(motif, scale=echelle, angle=angle)
             hatch.paths.add_polyline_path(points, is_closed=True)
-            hatch.dxf.associative = 0 # Désactivé par sécurité
+            hatch.dxf.associative = 0 
         except Exception:
             pass 
 
-def nettoyer_nom(texte):
-    return texte.upper().replace(' ', '_').replace('/', '_').replace('É', 'E').replace('È', 'E')
-
-# --- MOTEUR DE DESSIN DXF ---
+# --- 2. MOTEUR DE DESSIN DXF (Écriture Binaire Sécurisée) ---
 def generer_dxf(couches, hauteur_mur, men_config):
-    doc = ezdxf.new('R2010')
+    # setup=True charge les motifs de hachures standard d'AutoCAD !
+    doc = ezdxf.new('R2010', setup=True) 
     msp = doc.modelspace()
     longueur_mur = 3000 
     ep_joint = 8 
@@ -139,7 +144,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
 
         y_plan += ep
 
-    # --- Menuiserie Détaillée (Plan) ---
+    # --- Menuiserie (Plan) ---
     if a_menuiserie:
         msp.add_lwpolyline([(x_trou_debut, y_nu_pose), (x_trou_debut+w_dormant, y_nu_pose), (x_trou_debut+w_dormant, y_nu_pose+ep_dormant), (x_trou_debut, y_nu_pose+ep_dormant)], close=True, dxfattribs={'layer': "MENUISERIE"})
         msp.add_lwpolyline([(x_trou_fin-w_dormant, y_nu_pose), (x_trou_fin, y_nu_pose), (x_trou_fin, y_nu_pose+ep_dormant), (x_trou_fin-w_dormant, y_nu_pose+ep_dormant)], close=True, dxfattribs={'layer': "MENUISERIE"})
@@ -202,7 +207,7 @@ def generer_dxf(couches, hauteur_mur, men_config):
                 
         x_coupe += ep
 
-    # --- Menuiserie Détaillée (Coupe) ---
+    # --- Menuiserie (Coupe) ---
     if a_menuiserie:
         msp.add_lwpolyline([(y_nu_pose, y_trou_debut), (y_nu_pose+ep_dormant, y_trou_debut), (y_nu_pose+ep_dormant, y_trou_debut+w_dormant), (y_nu_pose, y_trou_debut+w_dormant)], close=True, dxfattribs={'layer': "MENUISERIE"})
         msp.add_lwpolyline([(y_nu_pose, y_trou_fin-w_dormant), (y_nu_pose+ep_dormant, y_trou_fin-w_dormant), (y_nu_pose+ep_dormant, y_trou_fin), (y_nu_pose, y_trou_fin)], close=True, dxfattribs={'layer': "MENUISERIE"})
@@ -223,26 +228,22 @@ def generer_dxf(couches, hauteur_mur, men_config):
         doc.layers.add(name="VUE_ELEVATION", color=mat_ext['couleur'])
         doc.layers.add(name="VUE_ELEVATION_JOINTS", color=252) 
         
-        # METHODE GEOMETRIQUE INCASSABLE POUR L'ELEVATION
         if a_menuiserie:
             x_trou_elev = x_elev + x_trou_debut
             
-            # 1. Rectangle Gauche
+            # Mur construit en 4 rectangles (Aucun "trou" complexe pour AutoCAD)
             pts_g = [(x_elev, y_coupe_base), (x_trou_elev, y_coupe_base), (x_trou_elev, y_coupe_base + hauteur_mur), (x_elev, y_coupe_base + hauteur_mur)]
             msp.add_lwpolyline(pts_g, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
             dessiner_hachure(msp, pts_g, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
             
-            # 2. Rectangle Droite
             pts_d = [(x_trou_elev + w_fen, y_coupe_base), (x_elev + longueur_mur, y_coupe_base), (x_elev + longueur_mur, y_coupe_base + hauteur_mur), (x_trou_elev + w_fen, y_coupe_base + hauteur_mur)]
             msp.add_lwpolyline(pts_d, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
             dessiner_hachure(msp, pts_d, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
             
-            # 3. Rectangle Allège (Bas)
             pts_b = [(x_trou_elev, y_coupe_base), (x_trou_elev + w_fen, y_coupe_base), (x_trou_elev + w_fen, y_trou_debut), (x_trou_elev, y_trou_debut)]
             msp.add_lwpolyline(pts_b, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
             dessiner_hachure(msp, pts_b, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
             
-            # 4. Rectangle Imposte (Haut)
             pts_h = [(x_trou_elev, y_trou_fin), (x_trou_elev + w_fen, y_trou_fin), (x_trou_elev + w_fen, y_coupe_base + hauteur_mur), (x_trou_elev, y_coupe_base + hauteur_mur)]
             msp.add_lwpolyline(pts_h, close=True, dxfattribs={'layer': "VUE_ELEVATION"})
             dessiner_hachure(msp, pts_h, "VUE_ELEVATION", mat_ext['motif_elev'], mat_ext['echelle_elev'], mat_ext['angle_elev'])
@@ -289,10 +290,16 @@ def generer_dxf(couches, hauteur_mur, men_config):
                     msp.add_line((x_elev, cal_y), (x_elev + longueur_mur, cal_y), dxfattribs={'layer': "VUE_ELEVATION_JOINTS"})
                 cal_y += cal_h
 
-    buffer = io.StringIO()
-    doc.write(buffer)
-    # L'encodage direct en UTF-8 garantit que Streamlit n'altèrera pas les lignes
-    return buffer.getvalue().encode('utf-8')
+    # --- LE SECRET D'UN FICHIER INCORRUPTIBLE : ÉCRITURE PHYSIQUE ---
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.dxf') as tmp:
+        filepath = tmp.name
+    doc.saveas(filepath)
+    
+    with open(filepath, 'rb') as f:
+        dxf_data = f.read()
+        
+    os.remove(filepath)
+    return dxf_data
 
 
 # --- 3. INTERFACE UTILISATEUR ---
@@ -407,10 +414,11 @@ with tab_export:
         st.info(f"Épaisseur totale réelle du mur : **{ep_totale} mm**")
         dxf_data = generer_dxf(st.session_state.couches_generees, hauteur_mur, st.session_state.men_config)
         
+        # Le MIME TYPE a été mis à jour pour forcer le téléchargement d'un binaire brut
         st.download_button(
             label="💾 Télécharger les Plans (.dxf)", 
             data=dxf_data, 
             file_name="mur_complet.dxf", 
-            mime="application/dxf", 
+            mime="application/octet-stream", 
             use_container_width=True
         )
